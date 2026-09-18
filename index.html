@@ -1,106 +1,52 @@
-<!-- Replace your current login button div with this authentication panel -->
-<div class="dw-block" id="auth-panel" style="padding: 15px; background-color: #e8f5e9; border-color: #a5d6a7;">
-    <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
-        <span id="user-status" style="font-weight: bold; color: #2e7d32; flex-grow: 1;">Not logged in</span>
-        
-        <div id="login-fields" style="display: flex; gap: 10px; align-items: center;">
-            <input type="email" id="email-input" placeholder="Email address" style="padding: 6px; border: 1px solid #ccc; border-radius: 4px;">
-            <input type="password" id="password-input" placeholder="Password" style="padding: 6px; border: 1px solid #ccc; border-radius: 4px;">
-            <button id="login-btn" style="padding: 6px 12px; background-color: #003366; color: white; border: none; border-radius: 4px; cursor: pointer;">Log In</button>
-            <button id="register-btn" style="padding: 6px 12px; background-color: #4b5563; color: white; border: none; border-radius: 4px; cursor: pointer;">Register</button>
-        </div>
-        
-        <button id="logout-btn" style="display: none; padding: 6px 12px; background-color: #d32f2f; color: white; border: none; border-radius: 4px; cursor: pointer;">Log Out</button>
-    </div>
-</div>
-
-<!-- Replace your entire <script> block with this updated version -->
 <script type="module">
-     // Import the functions you need from the SDKs you need
-    import { initializeApp } from "firebase/app";
-    import { getAnalytics } from "firebase/analytics";
-    // TODO: Add SDKs for Firebase products that you want to use
-    // https://firebase.google.com/docs/web/setup#available-libraries
-    
-    // Your web app's Firebase configuration
-    // For Firebase JS SDK v7.20.0 and later, measurementId is optional
+    // 1. Import Firebase Firestore modules
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.4.0/firebase-app.js";
+    import { getFirestore, doc, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/10.4.0/firebase-firestore.js";
+
+    // 2. PASTE YOUR FIREBASE CONFIG HERE
     const firebaseConfig = {
-      apiKey: "AIzaSyASaD9pW1Hoxo31IZBqeUKbUyi5Yuoqg38",
-      authDomain: "paleodegreetracker.firebaseapp.com",
-      projectId: "paleodegreetracker",
-      storageBucket: "paleodegreetracker.firebasestorage.app",
-      messagingSenderId: "690291491470",
-      appId: "1:690291491470:web:10b82aff94beac6a38ffdf",
-      measurementId: "G-XQFHW1BS9L"
+        apiKey: "YOUR_API_KEY",
+        authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+        projectId: "YOUR_PROJECT_ID",
+        storageBucket: "YOUR_PROJECT_ID.appspot.com",
+        messagingSenderId: "YOUR_SENDER_ID",
+        appId: "YOUR_APP_ID"
     };
-    
-    // Initialize Firebase
+
+    // 3. Initialize Firebase Services
     const app = initializeApp(firebaseConfig);
-    const analytics = getAnalytics(app);
-    // DOM Elements
-    const emailInput = document.getElementById('email-input');
-    const passwordInput = document.getElementById('password-input');
-    const loginBtn = document.getElementById('login-btn');
-    const registerBtn = document.getElementById('register-btn');
-    const logoutBtn = document.getElementById('logout-btn');
-    const loginFields = document.getElementById('login-fields');
-    const userStatus = document.getElementById('user-status');
+    const db = getFirestore(app);
+
     const checkboxes = document.querySelectorAll('input[type="checkbox"]');
-    
-    let currentUser = null;
 
-    // 4. Handle Registration
-    registerBtn.addEventListener('click', () => {
-        const email = emailInput.value;
-        const password = passwordInput.value;
-        if (!email || !password) return alert("Please enter both email and password.");
-        
-        createUserWithEmailAndPassword(auth, email, password)
-            .catch(error => alert("Registration failed: " + error.message));
-    });
+    // 4. Handle Unique URL Token Generation & Data Loading
+    async function initTracker() {
+        const urlParams = new URLSearchParams(window.location.search);
+        let trackerId = urlParams.get('id');
 
-    // 5. Handle Login
-    loginBtn.addEventListener('click', () => {
-        const email = emailInput.value;
-        const password = passwordInput.value;
-        if (!email || !password) return alert("Please enter both email and password.");
-        
-        signInWithEmailAndPassword(auth, email, password)
-            .catch(error => alert("Login failed: " + error.message));
-    });
-
-    // 6. Handle Logout
-    logoutBtn.addEventListener('click', () => {
-        signOut(auth);
-    });
-
-    // 7. Listen for Login State Changes
-    onAuthStateChanged(auth, async (user) => {
-        if (user) {
-            currentUser = user;
-            userStatus.innerText = `Logged in as: ${user.email}`;
-            loginFields.style.display = 'none';
-            logoutBtn.style.display = 'block';
-            
-            emailInput.value = '';
-            passwordInput.value = '';
-            
-            await loadUserData(user.uid);
-            enableCheckboxes(true);
-        } else {
-            currentUser = null;
-            userStatus.innerText = "Please log in to save your progress.";
-            loginFields.style.display = 'flex';
-            logoutBtn.style.display = 'none';
-            
-            resetCheckboxes();
-            enableCheckboxes(false);
+        // If there is no ID in the URL, create a new one and update the browser bar
+        if (!trackerId) {
+            trackerId = crypto.randomUUID();
+            const newUrl = `${window.location.pathname}?id=${trackerId}`;
+            window.history.replaceState({}, '', newUrl);
         }
-    });
 
-    // 8. Load User Data from Firestore
-    async function loadUserData(userId) {
-        const docRef = doc(db, "users", userId);
+        // Display a small notification banner or status if desired
+        console.log("Active Tracker ID:", trackerId);
+
+        // Load existing data from Firestore using this token ID
+        await loadTrackerData(trackerId);
+
+        // Enable checkboxes for interaction
+        checkboxes.forEach(cb => cb.disabled = false);
+
+        // Setup save listeners
+        setupAutoSave(trackerId);
+    }
+
+    // 5. Load Data from Firestore
+    async function loadTrackerData(trackerId) {
+        const docRef = doc(db, "trackers", trackerId);
         const docSnap = await getDoc(docRef);
 
         if (docSnap.exists()) {
@@ -112,44 +58,32 @@
                 if (data[courseId] === true) {
                     checkbox.checked = true;
                     row.classList.add('completed-row');
-                } else {
-                    checkbox.checked = false;
-                    row.classList.remove('completed-row');
                 }
             });
         }
     }
 
-    // 9. Save Checkbox Clicks to Firestore
-    checkboxes.forEach(checkbox => {
-        checkbox.addEventListener('change', async (e) => {
-            if (!currentUser) return;
-
-            const courseId = checkbox.getAttribute('data-id');
-            const isChecked = e.target.checked;
-            const row = checkbox.closest('tr');
-
-            if (isChecked) row.classList.add('completed-row');
-            else row.classList.remove('completed-row');
-
-            const userRef = doc(db, "users", currentUser.uid);
-            await setDoc(userRef, { [courseId]: isChecked }, { merge: true });
-        });
-    });
-
-    // UI Helper Functions
-    function resetCheckboxes() {
+    // 6. Save Checkbox Changes to Firestore Automatically
+    function setupAutoSave(trackerId) {
         checkboxes.forEach(checkbox => {
-            checkbox.checked = false;
-            checkbox.closest('tr').classList.remove('completed-row');
+            checkbox.addEventListener('change', async (e) => {
+                const courseId = checkbox.getAttribute('data-id');
+                const isChecked = e.target.checked;
+                const row = checkbox.closest('tr');
+
+                // Visual update
+                if (isChecked) row.classList.add('completed-row');
+                else row.classList.remove('completed-row');
+
+                // Save to database under the unique token collection
+                const trackerRef = doc(db, "trackers", trackerId);
+                await setDoc(trackerRef, { [courseId]: isChecked }, { merge: true });
+            });
         });
     }
 
-    function enableCheckboxes(enabled) {
-        checkboxes.forEach(checkbox => {
-            checkbox.disabled = !enabled;
-        });
-    }
+    // Run on page load
+    initTracker();
 </script>
 
 <!DOCTYPE html>
