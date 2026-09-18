@@ -10,7 +10,6 @@
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.4.0/firebase-app.js";
         import { getFirestore, doc, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/10.4.0/firebase-firestore.js";
 
-        // Your web app's Firebase configuration
         const firebaseConfig = {
             apiKey: "AIzaSyASaD9pW1Hoxo31IZBqeUKbUyi5Yuoqg38",
             authDomain: "paleodegreetracker.firebaseapp.com",
@@ -21,83 +20,110 @@
             measurementId: "G-XQFHW1BS9L"
         };
         
-        // Initialize Firebase & Firestore
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
 
         document.addEventListener("DOMContentLoaded", () => {
             const checkboxes = document.querySelectorAll('input[type="checkbox"]');
-            initTracker(checkboxes, db);
+            const creditInputs = document.querySelectorAll('.credit-input');
+            const orSelects = document.querySelectorAll('.or-select');
+            
+            initTracker(checkboxes, creditInputs, orSelects, db);
         });
 
-        async function initTracker(checkboxes, db) {
+        async function initTracker(checkboxes, creditInputs, orSelects, db) {
             const urlParams = new URLSearchParams(window.location.search);
             let trackerId = urlParams.get('id');
 
-            // If there is no ID in the URL, create a new one and update the browser bar
             if (!trackerId) {
                 trackerId = crypto.randomUUID();
                 const newUrl = `${window.location.pathname}?id=${trackerId}`;
                 window.history.replaceState({}, '', newUrl);
             }
 
-            console.log("Active Tracker ID:", trackerId);
+            await loadTrackerData(trackerId, checkboxes, creditInputs, orSelects, db);
 
-            // Load existing data from Firestore using this token ID
-            await loadTrackerData(trackerId, checkboxes, db);
-
-            // Enable checkboxes for interaction
             checkboxes.forEach(cb => cb.disabled = false);
+            creditInputs.forEach(input => input.disabled = false);
+            orSelects.forEach(sel => sel.disabled = false);
 
-            // Setup save listeners
-            setupAutoSave(trackerId, checkboxes, db);
+            setupAutoSave(trackerId, checkboxes, creditInputs, orSelects, db);
         }
 
-        async function loadTrackerData(trackerId, checkboxes, db) {
+        async function loadTrackerData(trackerId, checkboxes, creditInputs, orSelects, db) {
             const docRef = doc(db, "trackers", trackerId);
             const docSnap = await getDoc(docRef);
 
             if (docSnap.exists()) {
                 const data = docSnap.data();
+                
                 checkboxes.forEach(checkbox => {
                     const courseId = checkbox.getAttribute('data-id');
                     const row = checkbox.closest('tr');
-                    
                     if (data[courseId] === true) {
                         checkbox.checked = true;
                         if (row) row.classList.add('completed-row');
                     }
                 });
+
+                creditInputs.forEach(input => {
+                    const creditId = input.getAttribute('data-id');
+                    if (data[creditId] !== undefined) {
+                        input.value = data[creditId];
+                    }
+                });
+
+                orSelects.forEach(select => {
+                    const selectId = select.getAttribute('data-id');
+                    if (data[selectId]) {
+                        select.value = data[selectId];
+                    }
+                });
             }
-            // Update the progress calculations after loading data
-            updateProgress(checkboxes);
+            updateProgress(checkboxes, creditInputs);
         }
 
-        function setupAutoSave(trackerId, checkboxes, db) {
+        function setupAutoSave(trackerId, checkboxes, creditInputs, orSelects, db) {
             checkboxes.forEach(checkbox => {
                 checkbox.addEventListener('change', async (e) => {
                     const courseId = checkbox.getAttribute('data-id');
                     const isChecked = e.target.checked;
                     const row = checkbox.closest('tr');
 
-                    // Visual update
                     if (row) {
                         if (isChecked) row.classList.add('completed-row');
                         else row.classList.remove('completed-row');
                     }
 
-                    // Save to database under the unique token collection
                     const trackerRef = doc(db, "trackers", trackerId);
                     await setDoc(trackerRef, { [courseId]: isChecked }, { merge: true });
+                    updateProgress(checkboxes, creditInputs);
+                });
+            });
 
-                    // Recalculate progress bars instantly
-                    updateProgress(checkboxes);
+            creditInputs.forEach(input => {
+                input.addEventListener('input', async () => {
+                    const creditId = input.getAttribute('data-id');
+                    const val = parseFloat(input.value) || 0;
+
+                    const trackerRef = doc(db, "trackers", trackerId);
+                    await setDoc(trackerRef, { [creditId]: val }, { merge: true });
+                    updateProgress(checkboxes, creditInputs);
+                });
+            });
+
+            orSelects.forEach(select => {
+                select.addEventListener('change', async () => {
+                    const selectId = select.getAttribute('data-id');
+                    const val = select.value;
+
+                    const trackerRef = doc(db, "trackers", trackerId);
+                    await setDoc(trackerRef, { [selectId]: val }, { merge: true });
                 });
             });
         }
 
-        // Function to calculate earned vs total credits and update UI
-        function updateProgress(checkboxes) {
+        function updateProgress(checkboxes, creditInputs) {
             let totalEarned = 0;
             let totalPossible = 0;
 
@@ -105,13 +131,16 @@
                 const row = checkbox.closest('tr');
                 if (!row) return;
                 
-                // Get the last cell in the row which contains the credits
-                const cells = row.querySelectorAll('td');
-                const creditCell = cells[cells.length - 1];
-                if (!creditCell) return;
+                const creditInput = row.querySelector('.credit-input');
+                let credits = 0;
 
-                // Extract numeric value from text (e.g., "3.0" -> 3.0)
-                const credits = parseFloat(creditCell.textContent) || 0;
+                if (creditInput) {
+                    credits = parseFloat(creditInput.value) || 0;
+                } else {
+                    const cells = row.querySelectorAll('td');
+                    const creditCell = cells[cells.length - 1];
+                    credits = parseFloat(creditCell?.textContent) || 0;
+                }
 
                 totalPossible += credits;
                 if (checkbox.checked) {
@@ -121,11 +150,15 @@
 
             const percentage = totalPossible > 0 ? Math.round((totalEarned / totalPossible) * 100) : 0;
 
-            // Update DOM text and bar width
-            document.getElementById('earned-credits').textContent = totalEarned.toFixed(1);
-            document.getElementById('total-credits').textContent = totalPossible.toFixed(1);
-            document.getElementById('progress-percentage').textContent = `${percentage}%`;
-            document.getElementById('progress-bar-fill').style.width = `${percentage}%`;
+            const earnedElem = document.getElementById('earned-credits');
+            const totalElem = document.getElementById('total-credits');
+            const percentElem = document.getElementById('progress-percentage');
+            const barElem = document.getElementById('progress-bar-fill');
+
+            if (earnedElem) earnedElem.textContent = totalEarned.toFixed(1);
+            if (totalElem) totalElem.textContent = totalPossible.toFixed(1);
+            if (percentElem) percentElem.textContent = `${percentage}%`;
+            if (barElem) barElem.style.width = `${percentage}%`;
         }
     </script>
 
@@ -198,7 +231,6 @@
             text-align: center;
         }
 
-        /* Checkbox Styling */
         input[type="checkbox"] {
             width: 18px;
             height: 18px;
@@ -211,7 +243,6 @@
             font-weight: bold;
         }
 
-        /* Completed Row Styling */
         .completed-row td {
             background-color: #e8f5e9;
             color: #555;
@@ -221,7 +252,22 @@
             color: #2e7d32;
         }
 
-        /* Flexbox Divider */
+        .or-select {
+            padding: 4px;
+            font-weight: bold;
+            color: #003366;
+            border: 1px solid #ccc;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+
+        .credit-input {
+            width: 55px;
+            padding: 4px;
+            border: 1px solid #ccc;
+            border-radius: 3px;
+        }
+
         .or-divider {
             display: flex;
             align-items: center;
@@ -245,19 +291,19 @@
         .or-divider::after { margin-left: 10px; }
     </style>
 </head>
-    <!-- Progress Summary Bar -->
+<body>
+
+<!-- Progress Summary Bar -->
 <div class="dw-block" style="padding: 15px; background-color: #e3f2fd; border-color: #90caf9;">
     <h3 style="margin: 0 0 10px 0; color: #0d47a1;">Degree Progress</h3>
     <div style="display: flex; justify-content: space-between; font-weight: bold; margin-bottom: 5px; color: #333;">
         <span>Credits Earned: <span id="earned-credits">0.0</span> / <span id="total-credits">0.0</span></span>
         <span id="progress-percentage">0%</span>
     </div>
-    <!-- Progress Bar Track -->
     <div style="width: 100%; background-color: #e0e0e0; border-radius: 4px; height: 16px; overflow: hidden;">
         <div id="progress-bar-fill" style="width: 0%; height: 100%; background-color: #2e7d32; transition: width 0.3s ease;"></div>
     </div>
 </div>
-<body>
 
 <!-- Required Courses Block -->
     <div class="dw-block">
@@ -279,17 +325,17 @@
                 </tr>
             </thead>
             <tbody>
-                <tr><td class="status-needed"><input type="checkbox" data-id="GEO1110"></td><td class="course-code">GEO 1110</td><td>Physical Geology (BPS)</td><td>3.0</td></tr>
-                <tr><td class="status-needed"><input type="checkbox" data-id="GEO1115"></td><td class="course-code">GEO 1115</td><td>Physical Geology Lab</td><td>1.0</td></tr>
-                <tr><td class="status-needed"><input type="checkbox" data-id="GEO2200"></td><td class="course-code">GEO 2200</td><td>Earth Through Time</td><td>3.0</td></tr>
-                <tr><td class="status-needed"><input type="checkbox" data-id="GEO2205"></td><td class="course-code">GEO 2205</td><td>Earth Through Time Lab</td><td>1.0</td></tr>
-                <tr><td class="status-needed"><input type="checkbox" data-id="GEO2800"></td><td class="course-code">GEO 2800</td><td>Minerals and Rocks</td><td>4.0</td></tr>
-                <tr><td class="status-needed"><input type="checkbox" data-id="GEO3400"></td><td class="course-code">GEO 3400</td><td>Communicating GeoSci (CI)</td><td>3.0</td></tr>
-                <tr><td class="status-needed"><input type="checkbox" data-id="GEO3550"></td><td class="course-code">GEO 3550</td><td>Sed and Strat</td><td>4.0</td></tr>
-                <tr><td class="status-needed"><input type="checkbox" data-id="BIOL1610"></td><td class="course-code">BIOL 1610</td><td>Biology I</td><td>3.0</td></tr>
-                <tr><td class="status-needed"><input type="checkbox" data-id="BIOL1615"></td><td class="course-code">BIOL 1615</td><td>Bio I Lab</td><td>1.0</td></tr>
-                <tr><td class="status-needed"><input type="checkbox" data-id="BIOL1620"></td><td class="course-code">BIOL 1620</td><td>Biology II (BLS)</td><td>3.0</td></tr>
-                <tr><td class="status-needed"><input type="checkbox" data-id="BIOL1625"></td><td class="course-code">BIOL 1625</td><td>Bio II Lab</td><td>1.0</td></tr>
+                <tr><td class="status-needed"><input type="checkbox" data-id="GEO1110" disabled></td><td class="course-code">GEO 1110</td><td>Physical Geology (BPS)</td><td>3.0</td></tr>
+                <tr><td class="status-needed"><input type="checkbox" data-id="GEO1115" disabled></td><td class="course-code">GEO 1115</td><td>Physical Geology Lab</td><td>1.0</td></tr>
+                <tr><td class="status-needed"><input type="checkbox" data-id="GEO2200" disabled></td><td class="course-code">GEO 2200</td><td>Earth Through Time</td><td>3.0</td></tr>
+                <tr><td class="status-needed"><input type="checkbox" data-id="GEO2205" disabled></td><td class="course-code">GEO 2205</td><td>Earth Through Time Lab</td><td>1.0</td></tr>
+                <tr><td class="status-needed"><input type="checkbox" data-id="GEO2800" disabled></td><td class="course-code">GEO 2800</td><td>Minerals and Rocks</td><td>4.0</td></tr>
+                <tr><td class="status-needed"><input type="checkbox" data-id="GEO3400" disabled></td><td class="course-code">GEO 3400</td><td>Communicating GeoSci (CI)</td><td>3.0</td></tr>
+                <tr><td class="status-needed"><input type="checkbox" data-id="GEO3550" disabled></td><td class="course-code">GEO 3550</td><td>Sed and Strat</td><td>4.0</td></tr>
+                <tr><td class="status-needed"><input type="checkbox" data-id="BIOL1610" disabled></td><td class="course-code">BIOL 1610</td><td>Biology I</td><td>3.0</td></tr>
+                <tr><td class="status-needed"><input type="checkbox" data-id="BIOL1615" disabled></td><td class="course-code">BIOL 1615</td><td>Bio I Lab</td><td>1.0</td></tr>
+                <tr><td class="status-needed"><input type="checkbox" data-id="BIOL1620" disabled></td><td class="course-code">BIOL 1620</td><td>Biology II (BLS)</td><td>3.0</td></tr>
+                <tr><td class="status-needed"><input type="checkbox" data-id="BIOL1625" disabled></td><td class="course-code">BIOL 1625</td><td>Bio II Lab</td><td>1.0</td></tr>
             </tbody>
         </table>
     </div>
@@ -311,11 +357,11 @@
                 </tr>
             </thead>
             <tbody>
-                <tr><td class="status-needed"><input type="checkbox" data-id="GEO3250"></td><td class="course-code">GEO 3250</td><td>Natural History of Dinosaurs</td><td>3.0</td></tr>
-                <tr><td class="status-needed"><input type="checkbox" data-id="GEO3600"></td><td class="course-code">GEO 3600</td><td>Geomorphology</td><td>4.0</td></tr>
-                <tr><td class="status-needed"><input type="checkbox" data-id="GEO3700"></td><td class="course-code">GEO 3700</td><td>Structural Geology</td><td>4.0</td></tr>
-                <tr><td class="status-needed"><input type="checkbox" data-id="GEO3800"></td><td class="course-code">GEO 3800</td><td>Applied Geoscience Techniques (CI)</td><td>3.0</td></tr>
-                <tr><td class="status-needed"><input type="checkbox" data-id="GEO5660"></td><td class="course-code">GEO 5660</td><td>Applied Geophysics</td><td>4.0</td></tr>
+                <tr><td class="status-needed"><input type="checkbox" data-id="GEO3250" disabled></td><td class="course-code">GEO 3250</td><td>Natural History of Dinosaurs</td><td>3.0</td></tr>
+                <tr><td class="status-needed"><input type="checkbox" data-id="GEO3600" disabled></td><td class="course-code">GEO 3600</td><td>Geomorphology</td><td>4.0</td></tr>
+                <tr><td class="status-needed"><input type="checkbox" data-id="GEO3700" disabled></td><td class="course-code">GEO 3700</td><td>Structural Geology</td><td>4.0</td></tr>
+                <tr><td class="status-needed"><input type="checkbox" data-id="GEO3800" disabled></td><td class="course-code">GEO 3800</td><td>Applied Geoscience Techniques (CI)</td><td>3.0</td></tr>
+                <tr><td class="status-needed"><input type="checkbox" data-id="GEO5660" disabled></td><td class="course-code">GEO 5660</td><td>Applied Geophysics</td><td>4.0</td></tr>
             </tbody>
         </table>
     </div>
@@ -338,12 +384,43 @@
             </thead>
             <tbody>
                 <tr><td colspan="4" class="dw-subheader" style="border-bottom: none;">Research-based</td></tr>
-                <tr><td class="status-needed"><input type="checkbox" data-id="PROJ_RESEARCH"></td><td class="course-code">GEO 4900 <div class="or-divider">OR</div> BIOL 5800</td><td>Special Topics <div class="or-divider">OR</div> Undergrad Research</td><td>Varies</td></tr>
+                <tr>
+                    <td class="status-needed"><input type="checkbox" data-id="PROJ_RESEARCH" disabled></td>
+                    <td>
+                        <select class="or-select" data-id="select_research" disabled>
+                            <option value="GEO4900">GEO 4900</option>
+                            <option value="BIOL5800">BIOL 5800</option>
+                        </select>
+                    </td>
+                    <td>Special Topics / Undergrad Research</td>
+                    <td><input type="number" class="credit-input" data-id="credits_PROJ_RESEARCH" value="3.0" min="0" max="15" step="0.5" disabled></td>
+                </tr>
                 <tr><td colspan="4" class="dw-subheader" style="border-bottom: none;">Internship-based</td></tr>
-                <tr><td class="status-needed"><input type="checkbox" data-id="PROJ_INTERN"></td><td class="course-code">GEO 4900 <div class="or-divider">OR</div> BIOL 5800</td><td>Internship <div class="or-divider">OR</div> Co-op</td><td>Varies</td></tr>
+                <tr>
+                    <td class="status-needed"><input type="checkbox" data-id="PROJ_INTERN" disabled></td>
+                    <td>
+                        <select class="or-select" data-id="select_intern" disabled>
+                            <option value="GEO4900">GEO 4900</option>
+                            <option value="BIOL5800">BIOL 5800</option>
+                        </select>
+                    </td>
+                    <td>Internship / Co-op</td>
+                    <td><input type="number" class="credit-input" data-id="credits_PROJ_INTERN" value="3.0" min="0" max="15" step="0.5" disabled></td>
+                </tr>
                 <tr><td colspan="4" class="dw-subheader" style="border-bottom: none;">Field Camp-based</td></tr>
-                <tr><td class="status-needed"><input type="checkbox" data-id="PROJ_FIELDMETHODS"></td><td class="course-code">GEO 3900</td><td>Geo Field Methods (CI)</td><td>3.0</td></tr>
-                <tr><td class="status-needed"><input type="checkbox" data-id="PROJ_FIELDCAMP"></td><td class="course-code">GEO 5200 <div class="or-divider">OR</div> GEO 5210 <div class="or-divider">OR</div> ERTH 471</td><td>Geology Field Camp <div class="or-divider">OR</div> GeoProfessional Field Practicum <div class="or-divider">OR</div> Paleontology Field Camp</td><td>5.0 <div class="or-divider">OR</div> 3.0 <div class="or-divider">OR</div> 3.0</td></tr>
+                <tr><td class="status-needed"><input type="checkbox" data-id="PROJ_FIELDMETHODS" disabled></td><td class="course-code">GEO 3900</td><td>Geo Field Methods (CI)</td><td>3.0</td></tr>
+                <tr>
+                    <td class="status-needed"><input type="checkbox" data-id="PROJ_FIELDCAMP" disabled></td>
+                    <td>
+                        <select class="or-select" data-id="select_fieldcamp" disabled>
+                            <option value="GEO5200">GEO 5200 (5 cr)</option>
+                            <option value="GEO5210">GEO 5210 (3 cr)</option>
+                            <option value="ERTH471">ERTH 471 (3 cr)</option>
+                        </select>
+                    </td>
+                    <td>Field Camp Options</td>
+                    <td><input type="number" class="credit-input" data-id="credits_PROJ_FIELDCAMP" value="5.0" min="0" max="15" step="1.0" disabled></td>
+                </tr>
             </tbody>
         </table>
     </div>
@@ -365,10 +442,10 @@
                 </tr>
             </thead>
             <tbody>
-                <tr><td class="status-needed"><input type="checkbox" data-id="BIOL2220"></td><td class="course-code">BIOL 2220</td><td>General Ecology</td><td>3.0</td></tr>
-                <tr><td class="status-needed"><input type="checkbox" data-id="BIOL3020"></td><td class="course-code">BIOL 3020</td><td>Evolutionary Biology</td><td>3.0</td></tr>
-                <tr><td class="status-needed"><input type="checkbox" data-id="BIOL3050"></td><td class="course-code">BIOL 3050</td><td>Organismal Biology with Physiology w/ Lab</td><td>4.0</td></tr>
-                <tr><td class="status-needed"><input type="checkbox" data-id="BIOL4770"></td><td class="course-code">BIOL 4770</td><td>Introduction to Dynamic Biological Systems</td><td>3.0</td></tr>
+                <tr><td class="status-needed"><input type="checkbox" data-id="BIOL2220" disabled></td><td class="course-code">BIOL 2220</td><td>General Ecology</td><td>3.0</td></tr>
+                <tr><td class="status-needed"><input type="checkbox" data-id="BIOL3020" disabled></td><td class="course-code">BIOL 3020</td><td>Evolutionary Biology</td><td>3.0</td></tr>
+                <tr><td class="status-needed"><input type="checkbox" data-id="BIOL3050" disabled></td><td class="course-code">BIOL 3050</td><td>Organismal Biology with Physiology w/ Lab</td><td>4.0</td></tr>
+                <tr><td class="status-needed"><input type="checkbox" data-id="BIOL4770" disabled></td><td class="course-code">BIOL 4770</td><td>Introduction to Dynamic Biological Systems</td><td>3.0</td></tr>
             </tbody>
         </table>
     </div>
@@ -390,10 +467,10 @@
                 </tr>
             </thead>
             <tbody>
-                <tr><td class="status-needed"><input type="checkbox" data-id="CHEM1210"></td><td class="course-code">CHEM 1210</td><td>Principles of Chem (BPS)</td><td>4.0</td></tr>
-                <tr><td class="status-needed"><input type="checkbox" data-id="CHEM1215"></td><td class="course-code">CHEM 1215</td><td>Principles of Chem Lab</td><td>1.0</td></tr>
-                <tr><td class="status-needed"><input type="checkbox" data-id="CHEM1220"></td><td class="course-code">CHEM 1220</td><td>Principles of Chem II</td><td>4.0</td></tr>
-                <tr><td class="status-needed"><input type="checkbox" data-id="CHEM1225"></td><td class="course-code">CHEM 1225</td><td>Principles of Chem II Lab</td><td>1.0</td></tr>
+                <tr><td class="status-needed"><input type="checkbox" data-id="CHEM1210" disabled></td><td class="course-code">CHEM 1210</td><td>Principles of Chem (BPS)</td><td>4.0</td></tr>
+                <tr><td class="status-needed"><input type="checkbox" data-id="CHEM1215" disabled></td><td class="course-code">CHEM 1215</td><td>Principles of Chem Lab</td><td>1.0</td></tr>
+                <tr><td class="status-needed"><input type="checkbox" data-id="CHEM1220" disabled></td><td class="course-code">CHEM 1220</td><td>Principles of Chem II</td><td>4.0</td></tr>
+                <tr><td class="status-needed"><input type="checkbox" data-id="CHEM1225" disabled></td><td class="course-code">CHEM 1225</td><td>Principles of Chem II Lab</td><td>1.0</td></tr>
             </tbody>
         </table>
     </div>
@@ -415,10 +492,30 @@
                 </tr>
             </thead>
             <tbody>
-                <tr><td class="status-needed"><input type="checkbox" data-id="MATH_CALC"></td><td class="course-code">MATH 1100 <div class="or-divider">OR</div> MATH 1210</td><td>Calculus Techniques (QL) <div class="or-divider">OR</div> Calculus I (QL)</td><td>3.0 – 4.0</td></tr>
-                <tr><td class="status-needed"><input type="checkbox" data-id="MATH_STAT"></td><td class="course-code">STAT 2000 <div class="or-divider">OR</div> STAT 3000</td><td>Statistical Methods <div class="or-divider">OR</div> Statistics for Scientists</td><td>3.0 - 4.0</td></tr>
-                <tr><td class="status-needed"><input type="checkbox" data-id="CS1400"></td><td class="course-code">CS 1400</td><td>Intro to Comp Sci</td><td>4.0</td></tr>
-                <tr><td class="status-needed"><input type="checkbox" data-id="GEOG2800"></td><td class="course-code">GEOG 2800</td><td>Intro GIS</td><td>4.0</td></tr>
+                <tr>
+                    <td class="status-needed"><input type="checkbox" data-id="MATH_CALC" disabled></td>
+                    <td>
+                        <select class="or-select" data-id="select_math_calc" disabled>
+                            <option value="MATH1100">MATH 1100 (3.0 cr)</option>
+                            <option value="MATH1210">MATH 1210 (4.0 cr)</option>
+                        </select>
+                    </td>
+                    <td>Calculus Requirement (QL)</td>
+                    <td><input type="number" class="credit-input" data-id="credits_MATH_CALC" value="4.0" min="3" max="4" step="1.0" disabled></td>
+                </tr>
+                <tr>
+                    <td class="status-needed"><input type="checkbox" data-id="MATH_STAT" disabled></td>
+                    <td>
+                        <select class="or-select" data-id="select_math_stat" disabled>
+                            <option value="STAT2000">STAT 2000 (3.0 cr)</option>
+                            <option value="STAT3000">STAT 3000 (4.0 cr)</option>
+                        </select>
+                    </td>
+                    <td>Statistics Requirement</td>
+                    <td><input type="number" class="credit-input" data-id="credits_MATH_STAT" value="3.0" min="3" max="4" step="1.0" disabled></td>
+                </tr>
+                <tr><td class="status-needed"><input type="checkbox" data-id="CS1400" disabled></td><td class="course-code">CS 1400</td><td>Intro to Comp Sci</td><td>4.0</td></tr>
+                <tr><td class="status-needed"><input type="checkbox" data-id="GEOG2800" disabled></td><td class="course-code">GEOG 2800</td><td>Intro GIS</td><td>4.0</td></tr>
             </tbody>
         </table>
     </div>
@@ -440,10 +537,52 @@
                 </tr>
             </thead>
             <tbody>
-                <tr><td class="status-needed"><input type="checkbox" data-id="PHYS_1"></td><td class="course-code">PHYS 2010 <div class="or-divider">OR</div> 2110 <div class="or-divider">OR</div> 2210</td><td>Physics I Options</td><td>4.0</td></tr>
-                <tr><td class="status-needed"><input type="checkbox" data-id="PHYS_1_LAB"></td><td class="course-code">PHYS 2015 <div class="or-divider">OR</div> 2215</td><td>Physics I Lab Options</td><td>1.0</td></tr>
-                <tr><td class="status-needed"><input type="checkbox" data-id="PHYS_2"></td><td class="course-code">PHYS 2020 <div class="or-divider">OR</div> 2120 <div class="or-divider">OR</div> 2220</td><td>Physics II Options</td><td>4.0</td></tr>
-                <tr><td class="status-needed"><input type="checkbox" data-id="PHYS_2_LAB"></td><td class="course-code">PHYS 2025 <div class="or-divider">OR</div> 2225</td><td>Physics II Lab Options</td><td>1.0</td></tr>
+                <tr>
+                    <td class="status-needed"><input type="checkbox" data-id="PHYS_1" disabled></td>
+                    <td>
+                        <select class="or-select" data-id="select_phys1" disabled>
+                            <option value="2010">PHYS 2010</option>
+                            <option value="2110">PHYS 2110</option>
+                            <option value="2210">PHYS 2210</option>
+                        </select>
+                    </td>
+                    <td>Physics I Options</td>
+                    <td>4.0</td>
+                </tr>
+                <tr>
+                    <td class="status-needed"><input type="checkbox" data-id="PHYS_1_LAB" disabled></td>
+                    <td>
+                        <select class="or-select" data-id="select_phys1_lab" disabled>
+                            <option value="2015">PHYS 2015</option>
+                            <option value="2215">PHYS 2215</option>
+                        </select>
+                    </td>
+                    <td>Physics I Lab Options</td>
+                    <td>1.0</td>
+                </tr>
+                <tr>
+                    <td class="status-needed"><input type="checkbox" data-id="PHYS_2" disabled></td>
+                    <td>
+                        <select class="or-select" data-id="select_phys2" disabled>
+                            <option value="2020">PHYS 2020</option>
+                            <option value="2120">PHYS 2120</option>
+                            <option value="2220">PHYS 2220</option>
+                        </select>
+                    </td>
+                    <td>Physics II Options</td>
+                    <td>4.0</td>
+                </tr>
+                <tr>
+                    <td class="status-needed"><input type="checkbox" data-id="PHYS_2_LAB" disabled></td>
+                    <td>
+                        <select class="or-select" data-id="select_phys2_lab" disabled>
+                            <option value="2025">PHYS 2025</option>
+                            <option value="2225">PHYS 2225</option>
+                        </select>
+                    </td>
+                    <td>Physics II Lab Options</td>
+                    <td>1.0</td>
+                </tr>
             </tbody>
         </table>
     </div>
@@ -465,17 +604,17 @@
                 </tr>
             </thead>
             <tbody>
-                <tr><td class="status-needed"><input type="checkbox" data-id="BIOL5530"></td><td class="course-code">BIOL 5530</td><td>Insect System and Evo.</td><td>3.0</td></tr>
-                <tr><td class="status-needed"><input type="checkbox" data-id="BIOL5550"></td><td class="course-code">BIOL 5550</td><td>Freshwater Inverts</td><td>3.0</td></tr>
-                <tr><td class="status-needed"><input type="checkbox" data-id="BIOL5560"></td><td class="course-code">BIOL 5560</td><td>Ornithology</td><td>3.0</td></tr>
-                <tr><td class="status-needed"><input type="checkbox" data-id="BIOL5570"></td><td class="course-code">BIOL 5570</td><td>Mammalogy</td><td>3.0</td></tr>
-                <tr><td class="status-needed"><input type="checkbox" data-id="BIOL5580"></td><td class="course-code">BIOL 5580</td><td>Herpetology</td><td>3.0</td></tr>
-                <tr><td class="status-needed"><input type="checkbox" data-id="BIOL5600"></td><td class="course-code">BIOL 5600</td><td>Comparative Animal Phys.</td><td>3.0</td></tr>
-                <tr><td class="status-needed"><input type="checkbox" data-id="GEO5410"></td><td class="course-code">GEO 5410</td><td>Advanced Stratigraphy</td><td>3.0</td></tr>
-                <tr><td class="status-needed"><input type="checkbox" data-id="GEO5430"></td><td class="course-code">GEO 5430</td><td>Invert and Botany Paleo</td><td>3.0</td></tr>
-                <tr><td class="status-needed"><input type="checkbox" data-id="GEO5440"></td><td class="course-code">GEO 5440</td><td>Vert Paleo</td><td>3.0</td></tr>
-                <tr><td class="status-needed"><input type="checkbox" data-id="GEO5600"></td><td class="course-code">GEO 5600</td><td>Geochemistry</td><td>4.0</td></tr>
-                <tr><td class="status-needed"><input type="checkbox" data-id="GEO5680"></td><td class="course-code">GEO 5680</td><td>Paleoclimate</td><td>3.0</td></tr>
+                <tr><td class="status-needed"><input type="checkbox" data-id="BIOL5530" disabled></td><td class="course-code">BIOL 5530</td><td>Insect System and Evo.</td><td>3.0</td></tr>
+                <tr><td class="status-needed"><input type="checkbox" data-id="BIOL5550" disabled></td><td class="course-code">BIOL 5550</td><td>Freshwater Inverts</td><td>3.0</td></tr>
+                <tr><td class="status-needed"><input type="checkbox" data-id="BIOL5560" disabled></td><td class="course-code">BIOL 5560</td><td>Ornithology</td><td>3.0</td></tr>
+                <tr><td class="status-needed"><input type="checkbox" data-id="BIOL5570" disabled></td><td class="course-code">BIOL 5570</td><td>Mammalogy</td><td>3.0</td></tr>
+                <tr><td class="status-needed"><input type="checkbox" data-id="BIOL5580" disabled></td><td class="course-code">BIOL 5580</td><td>Herpetology</td><td>3.0</td></tr>
+                <tr><td class="status-needed"><input type="checkbox" data-id="BIOL5600" disabled></td><td class="course-code">BIOL 5600</td><td>Comparative Animal Phys.</td><td>3.0</td></tr>
+                <tr><td class="status-needed"><input type="checkbox" data-id="GEO5410" disabled></td><td class="course-code">GEO 5410</td><td>Advanced Stratigraphy</td><td>3.0</td></tr>
+                <tr><td class="status-needed"><input type="checkbox" data-id="GEO5430" disabled></td><td class="course-code">GEO 5430</td><td>Invert and Botany Paleo</td><td>3.0</td></tr>
+                <tr><td class="status-needed"><input type="checkbox" data-id="GEO5440" disabled></td><td class="course-code">GEO 5440</td><td>Vert Paleo</td><td>3.0</td></tr>
+                <tr><td class="status-needed"><input type="checkbox" data-id="GEO5600" disabled></td><td class="course-code">GEO 5600</td><td>Geochemistry</td><td>4.0</td></tr>
+                <tr><td class="status-needed"><input type="checkbox" data-id="GEO5680" disabled></td><td class="course-code">GEO 5680</td><td>Paleoclimate</td><td>3.0</td></tr>
             </tbody>
         </table>
     </div>
