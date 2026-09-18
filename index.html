@@ -69,6 +69,8 @@
                     }
                 });
             }
+            // Update the progress calculations after loading data
+            updateProgress(checkboxes);
         }
 
         function setupAutoSave(trackerId, checkboxes, db) {
@@ -87,8 +89,43 @@
                     // Save to database under the unique token collection
                     const trackerRef = doc(db, "trackers", trackerId);
                     await setDoc(trackerRef, { [courseId]: isChecked }, { merge: true });
+
+                    // Recalculate progress bars instantly
+                    updateProgress(checkboxes);
                 });
             });
+        }
+
+        // Function to calculate earned vs total credits and update UI
+        function updateProgress(checkboxes) {
+            let totalEarned = 0;
+            let totalPossible = 0;
+
+            checkboxes.forEach(checkbox => {
+                const row = checkbox.closest('tr');
+                if (!row) return;
+                
+                // Get the last cell in the row which contains the credits
+                const cells = row.querySelectorAll('td');
+                const creditCell = cells[cells.length - 1];
+                if (!creditCell) return;
+
+                // Extract numeric value from text (e.g., "3.0" -> 3.0)
+                const credits = parseFloat(creditCell.textContent) || 0;
+
+                totalPossible += credits;
+                if (checkbox.checked) {
+                    totalEarned += credits;
+                }
+            });
+
+            const percentage = totalPossible > 0 ? Math.round((totalEarned / totalPossible) * 100) : 0;
+
+            // Update DOM text and bar width
+            document.getElementById('earned-credits').textContent = totalEarned.toFixed(1);
+            document.getElementById('total-credits').textContent = totalPossible.toFixed(1);
+            document.getElementById('progress-percentage').textContent = `${percentage}%`;
+            document.getElementById('progress-bar-fill').style.width = `${percentage}%`;
         }
     </script>
 
@@ -208,6 +245,18 @@
         .or-divider::after { margin-left: 10px; }
     </style>
 </head>
+    <!-- Progress Summary Bar -->
+<div class="dw-block" style="padding: 15px; background-color: #e3f2fd; border-color: #90caf9;">
+    <h3 style="margin: 0 0 10px 0; color: #0d47a1;">Degree Progress</h3>
+    <div style="display: flex; justify-content: space-between; font-weight: bold; margin-bottom: 5px; color: #333;">
+        <span>Credits Earned: <span id="earned-credits">0.0</span> / <span id="total-credits">0.0</span></span>
+        <span id="progress-percentage">0%</span>
+    </div>
+    <!-- Progress Bar Track -->
+    <div style="width: 100%; background-color: #e0e0e0; border-radius: 4px; height: 16px; overflow: hidden;">
+        <div id="progress-bar-fill" style="width: 0%; height: 100%; background-color: #2e7d32; transition: width 0.3s ease;"></div>
+    </div>
+</div>
 <body>
 
 <!-- Required Courses Block -->
